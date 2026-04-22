@@ -1,7 +1,19 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .env
-*.sql
-*.tar
+.venv/
+venv/
+
+# Data
+data/raw/
+csv/
+*.parquet
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
