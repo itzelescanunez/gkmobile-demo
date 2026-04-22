@@ -17,3 +17,9 @@ csv/
 # IDE
 .vscode/
 .idea/
+
+# Archivos grandes — no subir a GitHub
+etl/sql_raw/
+data/parquet/
+data/raw/
+csv/
