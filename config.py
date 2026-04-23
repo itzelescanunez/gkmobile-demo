@@ -4,6 +4,35 @@ import os
 BASE_DIR    = Path(__file__).parent
 PARQUET_DIR = Path(os.getenv("PARQUET_DIR", str(BASE_DIR / "data/parquet")))
 
+# ── Descarga desde Hugging Face si no existen localmente ──
+def _init_parquets():
+    hf_token   = os.getenv("HF_TOKEN")
+    hf_dataset = os.getenv("HF_DATASET")
+
+    if not hf_token or not hf_dataset:
+        return  # local — no hacer nada
+
+    cache_dir = Path("/tmp/gkmobile_parquets")
+    if cache_dir.exists() and any(cache_dir.rglob("*.parquet")):
+        return  # ya descargados en esta sesión
+
+    print("Descargando parquets desde Hugging Face...")
+    from huggingface_hub import snapshot_download
+    snapshot_download(
+        repo_id=hf_dataset,
+        repo_type="dataset",
+        token=hf_token,
+        local_dir=str(cache_dir),
+        ignore_patterns=["*.md", ".gitattributes"],
+    )
+    print("✅ Parquets listos.")
+
+    # Apuntar PARQUET_DIR al cache
+    global PARQUET_DIR
+    PARQUET_DIR = cache_dir
+
+_init_parquets()
+
 def parquet(nombre, cliente=None):
     if cliente:
         return str(PARQUET_DIR / cliente / f"{nombre}.parquet")
