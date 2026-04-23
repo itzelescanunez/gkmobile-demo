@@ -6,10 +6,5 @@ pyarrow==19.0.1
 folium==0.20.0
 streamlit-folium==0.24.0
 openpyxl==3.1.5
-bcrypt==5.0.0
 huggingface_hub==0.30.2
-fastapi==0.135.2
-uvicorn==0.34.2
-sqlalchemy==2.0.40
-pymysql==1.1.1
 toml==0.10.2
