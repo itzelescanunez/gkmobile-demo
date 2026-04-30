@@ -5,13 +5,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-# ── Descarga parquets desde HF ANTES de importar config ──
+# ── Descarga parquets desde HF y escribe ruta a /tmp ──
 hf_token   = st.secrets.get("HF_TOKEN")
 hf_dataset = st.secrets.get("HF_DATASET")
 
 if hf_token and hf_dataset:
     cache_dir = Path("/tmp/gkmobile_parquets")
-    if not cache_dir.exists() or not any(cache_dir.rglob("*.parquet")):
+    marker    = Path("/tmp/gkmobile_parquets/.ready")
+
+    if not marker.exists():
         with st.spinner("Descargando datos... esto puede tardar unos minutos."):
             from huggingface_hub import snapshot_download
             snapshot_download(
@@ -21,7 +23,10 @@ if hf_token and hf_dataset:
                 local_dir=str(cache_dir),
                 ignore_patterns=["*.md", ".gitattributes"],
             )
-    os.environ["PARQUET_DIR"] = str(cache_dir)
+            marker.touch()
+
+    # Escribir ruta a archivo para que config.py la lea
+    Path("/tmp/gkmobile_parquet_dir.txt").write_text(str(cache_dir))
 
 from app.auth import check_password
 check_password()

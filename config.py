@@ -4,6 +4,10 @@ import os
 BASE_DIR = Path(__file__).parent
 
 def _get_parquet_dir():
+    # Leer ruta desde archivo temporal si existe
+    marker = Path("/tmp/gkmobile_parquet_dir.txt")
+    if marker.exists():
+        return Path(marker.read_text().strip())
     return Path(os.getenv("PARQUET_DIR", str(BASE_DIR / "data/parquet")))
 
 def parquet(nombre, cliente=None):
@@ -14,7 +18,7 @@ def parquet(nombre, cliente=None):
         path = PARQUET_DIR / sub / f"{nombre}.parquet"
         if path.exists():
             return str(path)
-    raise FileNotFoundError(f"Parquet '{nombre}' no encontrado")
+    raise FileNotFoundError(f"Parquet '{nombre}' no encontrado en {PARQUET_DIR}")
 
 CLIENTES = {
     1:   "Philip Morris International",
