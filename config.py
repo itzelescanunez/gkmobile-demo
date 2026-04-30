@@ -31,7 +31,7 @@ def _init_parquets():
     global PARQUET_DIR
     PARQUET_DIR = cache_dir
 
-#_init_parquets()
+_init_parquets()
 
 def parquet(nombre, cliente=None):
     if cliente:
