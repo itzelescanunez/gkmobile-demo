@@ -103,10 +103,10 @@ fecha_fin = st.sidebar.date_input("Fecha fin",    fecha_max)
 def opciones_filtros(cliente_id, fecha_ini, fecha_fin):
     return con.execute("""
                        SELECT
-                           COALESCE(LIST(DISTINCT estado   ORDER BY estado),   []) as estados,
-                           COALESCE(LIST(DISTINCT municipio ORDER BY municipio),[]) as municipios,
-                           COALESCE(LIST(DISTINCT cadena_str ORDER BY cadena_str),[]) as cadenas,
-                           COALESCE(LIST(DISTINCT ruta      ORDER BY ruta),    []) as rutas
+                           COALESCE(LIST(DISTINCT estado    ORDER BY estado),    []) as estados,
+                           COALESCE(LIST(DISTINCT municipio ORDER BY municipio), []) as municipios,
+                           COALESCE(LIST(DISTINCT cadena    ORDER BY cadena),    []) as cadenas,
+                           COALESCE(LIST(DISTINCT ruta      ORDER BY ruta),      []) as rutas
                        FROM geo
                        WHERE dia BETWEEN ? AND ?
                          AND estado IS NOT NULL
@@ -145,7 +145,7 @@ def filtro_where(fecha_ini, fecha_fin, estado_sel, municipio_sel, cadena_sel, ru
     conds = [f"dia BETWEEN '{fecha_ini}' AND '{fecha_fin}'"]
     if estado_sel    != "Todos": conds.append(f"estado = '{estado_sel}'")
     if municipio_sel != "Todos": conds.append(f"municipio = '{municipio_sel}'")
-    if cadena_sel    != "Todos": conds.append(f"cadena_str = '{cadena_sel}'")
+    if cadena_sel    != "Todos": conds.append(f"cadena = '{cadena_sel}'")
     if ruta_sel      != "Todos": conds.append(f"ruta = '{ruta_sel}'")
     return " AND ".join(conds)
 
@@ -161,7 +161,7 @@ def cargar_visitas(cliente_id, fecha_ini, fecha_fin,
             g.dia                                               AS fecha,
             g.punto_venta_id,
             g.sucursal                                          AS punto_venta,
-            g.cadena_str                                        AS cadena,
+            g.cadena                                        AS cadena,
             g.estado,
             g.municipio,
             g.ruta,
@@ -183,6 +183,7 @@ def cargar_visitas(cliente_id, fecha_ini, fecha_fin,
 # ─────────────────────────────────────────
 # RENDER
 # ─────────────────────────────────────────
+
 st.title("📍 Monitor Geolocalización")
 st.caption(f"{cliente_sel}  ·  {fecha_ini} — {fecha_fin}"
            + (f"  ·  {estado_sel}" if estado_sel != "Todos" else "")
@@ -315,4 +316,104 @@ with tab3:
         df_crit[["fecha","promotor","ruta","punto_venta",
                  "cadena","estado","municipio","distancia_metros","estado_geo"]],
         hide_index=True, width="stretch"
+    )
+
+    # ── LISTADO DETALLADO ─────────────────────────────────
+st.divider()
+st.markdown('<p class="section-title">Listado detallado de visitas</p>',
+            unsafe_allow_html=True)
+
+@st.cache_data(ttl=300)
+def detalle_visitas(cliente_id, fecha_ini, fecha_fin,
+                    estado_sel, municipio_sel, cadena_sel, ruta_sel):
+    where = filtro_where(fecha_ini, fecha_fin,
+                         estado_sel, municipio_sel, cadena_sel, ruta_sel)
+    return con.execute(f"""
+        SELECT
+            g.dia                                               AS fecha,
+            u.user_real_name                                    AS promotor,
+            g.ruta,
+            g.estado,
+            g.municipio,
+            g.sucursal                                          AS punto_venta,
+            g.cadena,
+            STRFTIME(g.hora_checkin, '%H:%M')                   AS hora_checkin,
+            ROUND(111320 * SQRT(
+                POWER(g.lat_checkin - g.lat_pdv, 2) +
+                POWER((g.lon_checkin - g.lon_pdv)
+                    * COS(RADIANS(g.lat_pdv)), 2)
+            ), 0)                                               AS distancia_metros,
+            CASE
+                WHEN ROUND(111320 * SQRT(
+                    POWER(g.lat_checkin - g.lat_pdv, 2) +
+                    POWER((g.lon_checkin - g.lon_pdv)
+                        * COS(RADIANS(g.lat_pdv)), 2)
+                ), 0) <= {umbral_amarillo} THEN 'En rango'
+                WHEN ROUND(111320 * SQRT(
+                    POWER(g.lat_checkin - g.lat_pdv, 2) +
+                    POWER((g.lon_checkin - g.lon_pdv)
+                        * COS(RADIANS(g.lat_pdv)), 2)
+                ), 0) <= {umbral_rojo} THEN 'Alerta'
+                ELSE 'Crítico'
+            END                                                 AS estado_geo,
+            g.es_fuera_ruta
+        FROM geo g
+        LEFT JOIN usuario u ON u.id = g.usuario_id
+        WHERE {where}
+        ORDER BY g.dia DESC, u.user_real_name
+    """).df()
+
+col1, col2, col3 = st.columns(3)
+solo_anomalos = col1.checkbox("Solo alertas y críticos", value=False)
+exportar      = col2.button("📥 Exportar Excel")
+
+with st.spinner("Cargando listado..."):
+    df_det = detalle_visitas(
+        st.session_state["mapa_cliente_id"],
+        st.session_state["mapa_fecha_ini"],
+        st.session_state["mapa_fecha_fin"],
+        st.session_state["mapa_estado"],
+        st.session_state["mapa_municipio"],
+        st.session_state["mapa_cadena"],
+        st.session_state["mapa_ruta"],
+    )
+
+if solo_anomalos:
+    df_det = df_det[df_det["estado_geo"].isin(["Alerta", "Crítico"])]
+
+col3.markdown(f"**{len(df_det):,}** visitas")
+
+st.dataframe(
+    df_det.rename(columns={
+        "fecha":           "Fecha",
+        "promotor":        "Promotor",
+        "ruta":            "Ruta",
+        "estado":          "Estado",
+        "municipio":       "Municipio",
+        "punto_venta":     "Punto de venta",
+        "cadena":          "Cadena",
+        "hora_checkin":    "Hora check-in",
+        "distancia_metros":"Distancia (m)",
+        "estado_geo":      "Estatus",
+        "es_fuera_ruta":   "Fuera de ruta",
+    }),
+    hide_index=True,
+    width="stretch",
+    column_config={
+        "Estatus": st.column_config.TextColumn(width="small"),
+        "Distancia (m)": st.column_config.NumberColumn(width="small"),
+        "Fuera de ruta": st.column_config.NumberColumn(width="small"),
+    }
+)
+
+if exportar:
+    import io
+    buffer = io.BytesIO()
+    df_det.to_excel(buffer, index=False)
+    buffer.seek(0)
+    st.download_button(
+        "⬇️ Descargar Excel",
+        data=buffer,
+        file_name=f"geo_{cliente_sel}_{fecha_ini}_{fecha_fin}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

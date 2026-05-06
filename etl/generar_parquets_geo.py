@@ -103,6 +103,62 @@ CADENAS_NORM = {
     "7 ELEVEN":            "7-Eleven",
 }
 
+MUNICIPIOS_NORM = {
+    "TUXTLA GUTIERREZ":           "Tuxtla Gutiérrez",
+    "Tuxtla Gutierrez":           "Tuxtla Gutiérrez",
+    "CUAUHTEMOC":                 "Cuauhtémoc",
+    "Cuauhtemoc":                 "Cuauhtémoc",
+    "cuauhtemoc":                 "Cuauhtémoc",
+    "CUAHTEMOC":                  "Cuauhtémoc",
+    "Cuahtemoc":                  "Cuauhtémoc",
+    "BENITO JUAREZ":              "Benito Juárez",
+    "Benito Juarez":              "Benito Juárez",
+    "benito juarez":              "Benito Juárez",
+    "TONALA":                     "Tonalá",
+    "Tonala":                     "Tonalá",
+    "CUAJIMALPA DE MORELOS":      "Cuajimalpa de Morelos",
+    "CUAJIMALPA":                 "Cuajimalpa",
+    "NEZAHUALCOYOTL":             "Nezahualcóyotl",
+    "Nezahualcoyotl":             "Nezahualcóyotl",
+    "SAN CRISTOBAL DE LAS CASAS": "San Cristóbal de las Casas",
+    "NAUCALPAN DE JUAREZ":        "Naucalpan de Juárez",
+    "Naucalpan De Juarez":        "Naucalpan de Juárez",
+    "GENERAL ESCOBEDO":           "General Escobedo",
+    "LOS REYES LA PAZ":           "Los Reyes La Paz",
+    "ATIZAPAN":                   "Atizapán",
+    "Atizapan":                   "Atizapán",
+    "SAN JOSE DEL CABO":          "San José del Cabo",
+    "San Jose del Cabo":          "San José del Cabo",
+    "San Jose del cabo":          "San José del Cabo",
+    "GOMEZ PALACIO":              "Gómez Palacio",
+    "Gomez Palacio":              "Gómez Palacio",
+    "SAN ANDRES CHOLULA":         "San Andrés Cholula",
+    "San Andres Cholula":         "San Andrés Cholula",
+    "NICOLAS ROMERO":             "Nicolás Romero",
+    "Nicolas Romero":             "Nicolás Romero",
+    "NAUCALPAN":                  "Naucalpan",
+    "CUAUTITLAN IZCALLI":         "Cuautitlán Izcalli",
+    "Cuautitlan Izcalli":         "Cuautitlán Izcalli",
+    "TECAMAC":                    "Tecámac",
+    "Tecamac":                    "Tecámac",
+    "SAN NICOLAS DE LOS GARZA":   "San Nicolás de los Garza",
+    "San Nicolas De Los Garza":   "San Nicolás de los Garza",
+    "SOLEDAD DE GRACIANO SANCHEZ":"Soledad de Graciano Sánchez",
+    "Soledad de Graciano Sanchez":"Soledad de Graciano Sánchez",
+    "CIUDAD DE MEXICO":           "Ciudad de México",
+    "Ciudad De Mexico":           "Ciudad de México",
+    "AZCAPOTZALCO":               "Azcapotzalco",
+    "QUERETARO":                  "Querétaro",
+    "CANCUN":                     "Cancún",
+    "Cancun":                     "Cancún",
+    "IXTAPALUCA":                 "Ixtapaluca",
+    "ixtapaluca":                 "Ixtapaluca",
+    "LOS CABOS":                  "Los Cabos",
+    "Los cabos":                  "Los Cabos",
+    "LEON":                       "León",
+    "MERIDA":                     "Mérida",
+}
+
 def sql_estado(col):
     col_limpio = limpiar_encoding(col)
     cases = "\n".join([
@@ -122,8 +178,13 @@ def sql_estado(col):
 
 def sql_municipio(col):
     col_limpio = limpiar_encoding(col)
+    cases = "\n".join([
+        f"            WHEN TRIM({col_limpio}) = '{k}' THEN '{v}'"
+        for k, v in MUNICIPIOS_NORM.items()
+    ])
     return f"""
         CASE
+{cases}
             WHEN {col} IS NULL
               OR TRIM({col}) IN ('', 'nan', 'S/A')
               THEN NULL
@@ -183,7 +244,9 @@ for cliente_id, nombre in clientes.items():
               AND a.fecha_real_inicio IS NOT NULL
               AND YEAR(CAST(a.fecha_planeada AS DATE)) BETWEEN 2015 AND 2026
               AND TRY_CAST(a.latitude_check_in AS DOUBLE) IS NOT NULL
+              AND NOT isnan(TRY_CAST(a.latitude_check_in AS DOUBLE))
               AND TRY_CAST(a.longitude_check_in AS DOUBLE) IS NOT NULL
+              AND NOT isnan(TRY_CAST(a.longitude_check_in AS DOUBLE))
               AND TRY_CAST(a.latitude_pdv AS DOUBLE) IS NOT NULL
               AND TRY_CAST(a.longitude_pdv AS DOUBLE) IS NOT NULL
         ) TO '{path}'
