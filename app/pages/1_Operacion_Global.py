@@ -339,9 +339,9 @@ def min_to_hhmm(mins):
 col1, col2, col3, col4 = st.columns(4)
 metric_card(col1, "T. laborado prom",   min_to_hhmm(avg_lab))
 metric_card(col2, "T. traslados prom",  min_to_hhmm(avg_tras),
-            sub=f"{int(df['pct_traslado'].mean() or 0)}% de jornada")
+            sub=f"{safe_int(df['pct_traslado'].mean())}% de jornada")
 metric_card(col3, "T. en PDV prom",     min_to_hhmm(avg_pdv),
-            sub=f"{int(df['pct_pdv'].mean() or 0)}% de jornada")
+            sub=f"{safe_int(df['pct_pdv'].mean())}% de jornada")
 metric_card(col4, "Visitas prom/día",   f"{avg_prom:.1f}")
 
 st.divider()
@@ -438,7 +438,9 @@ st.divider()
 # ─────────────────────────────────────────
 st.markdown('<p class="section-title">Detalle por usuario</p>', unsafe_allow_html=True)
 
-entidades = sorted(df["entidad"].unique().tolist())
+entidades = sorted(
+    [e for e in df["entidad"].unique().tolist() if e != "Sin entidad"]
+) + (["Sin entidad"] if "Sin entidad" in df["entidad"].unique().tolist() else [])
 
 for entidad in entidades:
     df_ent = df[df["entidad"] == entidad].copy()
