@@ -155,6 +155,7 @@ def kpis_por_usuario(cliente_id, fecha_ini, fecha_fin):
                 CAST(a.fecha_planeada AS DATE)              AS dia,
                 TRY_CAST(a.fecha_real_inicio AS TIMESTAMP)  AS inicio,
                 TRY_CAST(a.fecha_real_final  AS TIMESTAMP)  AS fin,
+                a.is_tarea,
                 EPOCH(
                     TRY_CAST(a.fecha_real_final AS TIMESTAMP) -
                     TRY_CAST(a.fecha_real_inicio AS TIMESTAMP)
@@ -177,6 +178,10 @@ def kpis_por_usuario(cliente_id, fecha_ini, fecha_fin):
                 usuario_id, username, user_real_name, entidad, dia,
                 COUNT(*)                                        AS planeadas,
                 COUNT(inicio)                                   AS realizadas,
+                COUNT(CASE WHEN is_tarea = '1'
+                    AND inicio IS NOT NULL THEN 1 END)          AS tareas_realizadas,
+                COUNT(CASE WHEN is_tarea = '1'
+                    THEN 1 END)                                 AS tareas_planeadas,
                 MIN(EPOCH(inicio) % 86400)                      AS seg_inicio,
                 MAX(EPOCH(fin)   % 86400)                       AS seg_fin,
                 CASE WHEN MAX(fin) > MIN(inicio)
@@ -201,6 +206,12 @@ def kpis_por_usuario(cliente_id, fecha_ini, fecha_fin):
             -- Promotores activos (días con al menos 1 visita)
             COUNT(DISTINCT CASE WHEN realizadas > 0
                 THEN dia END)                                   AS dias_activos,
+            -- Ausencias inferidas (días planeados sin ninguna visita realizada)
+            COUNT(CASE WHEN realizadas = 0
+                AND planeadas > 0 THEN 1 END)                   AS ausencias,
+            -- Tareas realizadas
+            SUM(tareas_realizadas)                              AS tareas_realizadas,
+            SUM(tareas_planeadas)                               AS tareas_planeadas,
             -- Hora inicio promedio
             {fmt_hhmm('AVG(CASE WHEN seg_inicio IS NOT NULL AND realizadas > 0 THEN seg_inicio END)')} AS hora_inicio,
             -- % cumplimiento hora inicio (antes 8am)
@@ -393,6 +404,8 @@ def render_tabla_equipo(df_eq):
           <td style="padding:8px;text-align:center">
             <span class="badge {'badge-green' if pct_v>=80 else 'badge-yellow' if pct_v>=60 else 'badge-red'}">{pct_v}%</span>
           </td>
+          <td style="padding:8px;text-align:center">{safe_int(r.get('tareas_realizadas',0))}</td>
+          <td style="padding:8px;text-align:center">{safe_int(r.get('ausencias',0))}</td>
         </tr>"""
     return f"""
     <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
@@ -409,6 +422,8 @@ def render_tabla_equipo(df_eq):
           <th style="padding:8px;text-align:center">Plan</th>
           <th style="padding:8px;text-align:center">Realizadas</th>
           <th style="padding:8px;text-align:center">Cump.</th>
+          <th style="padding:8px;text-align:center">Tareas</th>
+          <th style="padding:8px;text-align:center">Ausencias</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -470,6 +485,8 @@ for entidad in entidades:
               <td style="padding:8px;text-align:center">
                 <span class="badge {'badge-green' if pct_v>=80 else 'badge-yellow' if pct_v>=60 else 'badge-red'}">{pct_v}%</span>
               </td>
+              <td style="padding:8px;text-align:center">{safe_int(r.get('tareas_realizadas',0))}</td>
+              <td style="padding:8px;text-align:center">{safe_int(r.get('ausencias',0))}</td>
             </tr>"""
 
         st.markdown(f"""
@@ -488,6 +505,8 @@ for entidad in entidades:
               <th style="padding:8px;text-align:center">Plan</th>
               <th style="padding:8px;text-align:center">Realizadas</th>
               <th style="padding:8px;text-align:center">Cump.</th>
+              <th style="padding:8px;text-align:center">Tareas</th>
+              <th style="padding:8px;text-align:center">Ausencias</th>
             </tr>
           </thead>
           <tbody>{rows}</tbody>
