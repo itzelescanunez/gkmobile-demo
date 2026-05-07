@@ -12,6 +12,7 @@ import folium
 from streamlit_folium import st_folium
 import plotly.express as px
 from config import parquet, CLIENTES
+import io
 
 st.set_page_config(page_title="Monitor Geolocalización", layout="wide")
 
@@ -65,12 +66,11 @@ PARQUET_GEO = {
 # ─────────────────────────────────────────
 @st.cache_resource
 def get_con_geo(cliente_id):
-    """Carga el parquet geo solo del cliente seleccionado."""
     nombre = PARQUET_GEO[cliente_id]
     path   = parquet(nombre, "geo")
     con    = duckdb.connect()
-    con.execute(f"CREATE OR REPLACE VIEW geo AS SELECT * FROM read_parquet('{path}')")
-    con.execute(f"CREATE OR REPLACE VIEW usuario AS SELECT * FROM read_parquet('{parquet('user', 'global')}')")
+    con.execute(f"CREATE OR REPLACE VIEW geo      AS SELECT * FROM read_parquet('{path}')")
+    con.execute(f"CREATE OR REPLACE VIEW usuario  AS SELECT * FROM read_parquet('{parquet('user', 'global')}')")
     return con
 
 # ─────────────────────────────────────────
@@ -80,53 +80,82 @@ st.sidebar.title("Monitor Geo")
 
 cliente_sel = st.sidebar.selectbox("Cliente", list(CLIENTES_GEO.keys()))
 cliente_id  = CLIENTES_GEO[cliente_sel]
+con         = get_con_geo(cliente_id)
 
-# Cargar conexión del cliente seleccionado
-con = get_con_geo(cliente_id)
-
-# ── Filtros de fecha ──────────────────────
+# ── Fechas ────────────────────────────────
 @st.cache_data(ttl=600)
 def rango_fechas(cliente_id):
-    row = con.execute("""
-                      SELECT MIN(dia) as min_dia, MAX(dia) as max_dia
-                      FROM geo
-                      """).fetchone()
+    row = con.execute("SELECT MIN(dia), MAX(dia) FROM geo").fetchone()
     from datetime import date
     return row[0] or date.today().replace(day=1), row[1] or date.today()
 
 fecha_min, fecha_max = rango_fechas(cliente_id)
-fecha_ini = st.sidebar.date_input("Fecha inicio", fecha_max.replace(day=1))
-fecha_fin = st.sidebar.date_input("Fecha fin",    fecha_max)
+fecha_ini = st.sidebar.date_input("Fecha inicio", fecha_max.replace(day=1),
+                                  min_value=fecha_min, max_value=fecha_max)
+fecha_fin = st.sidebar.date_input("Fecha fin", fecha_max,
+                                  min_value=fecha_min, max_value=fecha_max)
 
-# ── Filtros geográficos (carga rápida desde parquet geo) ──
+# ── Filtros encadenados ───────────────────
 @st.cache_data(ttl=600)
-def opciones_filtros(cliente_id, fecha_ini, fecha_fin):
-    return con.execute("""
-                       SELECT
-                           COALESCE(LIST(DISTINCT estado    ORDER BY estado),    []) as estados,
-                           COALESCE(LIST(DISTINCT municipio ORDER BY municipio), []) as municipios,
-                           COALESCE(LIST(DISTINCT cadena    ORDER BY cadena),    []) as cadenas,
-                           COALESCE(LIST(DISTINCT ruta      ORDER BY ruta),      []) as rutas
-                       FROM geo
-                       WHERE dia BETWEEN ? AND ?
-                         AND estado IS NOT NULL
-                       """, [str(fecha_ini), str(fecha_fin)]).fetchone()
+def opciones_estados(cliente_id, fecha_ini, fecha_fin):
+    r = con.execute("""
+                    SELECT COALESCE(LIST(DISTINCT estado ORDER BY estado), []) as estados
+                    FROM geo
+                    WHERE dia BETWEEN ? AND ?
+                      AND estado IS NOT NULL
+                    """, [str(fecha_ini), str(fecha_fin)]).fetchone()
+    return r[0] or []
+
+@st.cache_data(ttl=600)
+def opciones_municipios(cliente_id, fecha_ini, fecha_fin, estado_sel):
+    filtro = f"AND estado = '{estado_sel}'" if estado_sel != "Todos" else ""
+    r = con.execute(f"""
+        SELECT COALESCE(LIST(DISTINCT municipio ORDER BY municipio), []) as municipios
+        FROM geo
+        WHERE dia BETWEEN ? AND ?
+          AND municipio IS NOT NULL
+          {filtro}
+    """, [str(fecha_ini), str(fecha_fin)]).fetchone()
+    return r[0] or []
+
+@st.cache_data(ttl=600)
+def opciones_cadenas(cliente_id, fecha_ini, fecha_fin, estado_sel, municipio_sel):
+    conds = [f"dia BETWEEN '{fecha_ini}' AND '{fecha_fin}'", "cadena IS NOT NULL"]
+    if estado_sel    != "Todos": conds.append(f"estado = '{estado_sel}'")
+    if municipio_sel != "Todos": conds.append(f"municipio = '{municipio_sel}'")
+    r = con.execute(f"""
+        SELECT COALESCE(LIST(DISTINCT cadena ORDER BY cadena), []) as cadenas
+        FROM geo WHERE {" AND ".join(conds)}
+    """).fetchone()
+    return r[0] or []
+
+@st.cache_data(ttl=600)
+def opciones_rutas(cliente_id, fecha_ini, fecha_fin, estado_sel, municipio_sel):
+    conds = [f"dia BETWEEN '{fecha_ini}' AND '{fecha_fin}'", "ruta IS NOT NULL"]
+    if estado_sel    != "Todos": conds.append(f"estado = '{estado_sel}'")
+    if municipio_sel != "Todos": conds.append(f"municipio = '{municipio_sel}'")
+    r = con.execute(f"""
+        SELECT COALESCE(LIST(DISTINCT ruta ORDER BY ruta), []) as rutas
+        FROM geo WHERE {" AND ".join(conds)}
+    """).fetchone()
+    return r[0] or []
 
 with st.spinner("Cargando filtros..."):
-    opts = opciones_filtros(cliente_id, fecha_ini, fecha_fin)
+    estados_list = opciones_estados(cliente_id, fecha_ini, fecha_fin)
 
-estados_disp   = ["Todos"] + [e for e in (opts[0] or []) if e]
-municipios_disp= ["Todos"] + [m for m in (opts[1] or []) if m]
-cadenas_disp   = ["Todos"] + [c for c in (opts[2] or []) if c]
-rutas_disp     = ["Todos"] + [r for r in (opts[3] or []) if r]
+estado_sel = st.sidebar.selectbox("Estado", ["Todos"] + [e for e in estados_list if e])
 
-estado_sel   = st.sidebar.selectbox("Estado",    estados_disp)
-municipio_sel= st.sidebar.selectbox("Municipio", municipios_disp)
-cadena_sel   = st.sidebar.selectbox("Cadena",    cadenas_disp)
-ruta_sel     = st.sidebar.selectbox("Ruta",      rutas_disp)
+municipios_list = opciones_municipios(cliente_id, fecha_ini, fecha_fin, estado_sel)
+municipio_sel   = st.sidebar.selectbox("Municipio", ["Todos"] + [m for m in municipios_list if m])
 
-umbral_amarillo = st.sidebar.slider("Umbral alerta (m)",   100,  1000,  300, step=50)
-umbral_rojo     = st.sidebar.slider("Umbral crítico (m)",  500, 20000, 1000, step=500)
+cadenas_list = opciones_cadenas(cliente_id, fecha_ini, fecha_fin, estado_sel, municipio_sel)
+cadena_sel   = st.sidebar.selectbox("Cadena", ["Todos"] + [c for c in cadenas_list if c])
+
+rutas_list = opciones_rutas(cliente_id, fecha_ini, fecha_fin, estado_sel, municipio_sel)
+ruta_sel   = st.sidebar.selectbox("Ruta", ["Todos"] + [r for r in rutas_list if r])
+
+umbral_amarillo = st.sidebar.slider("Umbral alerta (m)",  100,  1000,  300, step=50)
+umbral_rojo     = st.sidebar.slider("Umbral crítico (m)", 500, 20000, 1000, step=500)
 
 if st.sidebar.button("🗺️ Cargar mapa", type="primary", use_container_width=True):
     st.session_state["mapa_cargado"]    = True
@@ -137,6 +166,20 @@ if st.sidebar.button("🗺️ Cargar mapa", type="primary", use_container_width=
     st.session_state["mapa_municipio"]  = municipio_sel
     st.session_state["mapa_cadena"]     = cadena_sel
     st.session_state["mapa_ruta"]       = ruta_sel
+
+# ─────────────────────────────────────────
+# RENDER
+# ─────────────────────────────────────────
+st.title("📍 Monitor Geolocalización")
+st.caption(f"{cliente_sel}  ·  {fecha_ini} — {fecha_fin}"
+           + (f"  ·  {estado_sel}"   if estado_sel   != "Todos" else "")
+           + (f"  ·  {municipio_sel}" if municipio_sel != "Todos" else ""))
+
+if not st.session_state.get("mapa_cargado"):
+    st.info("Selecciona los filtros en el sidebar y haz click en **Cargar mapa**.")
+    st.stop()
+
+st.divider()
 
 # ─────────────────────────────────────────
 # QUERY PRINCIPAL
@@ -161,7 +204,7 @@ def cargar_visitas(cliente_id, fecha_ini, fecha_fin,
             g.dia                                               AS fecha,
             g.punto_venta_id,
             g.sucursal                                          AS punto_venta,
-            g.cadena                                        AS cadena,
+            g.cadena,
             g.estado,
             g.municipio,
             g.ruta,
@@ -180,21 +223,6 @@ def cargar_visitas(cliente_id, fecha_ini, fecha_fin,
         WHERE {where}
     """).df()
 
-# ─────────────────────────────────────────
-# RENDER
-# ─────────────────────────────────────────
-
-st.title("📍 Monitor Geolocalización")
-st.caption(f"{cliente_sel}  ·  {fecha_ini} — {fecha_fin}"
-           + (f"  ·  {estado_sel}" if estado_sel != "Todos" else "")
-           + (f"  ·  {municipio_sel}" if municipio_sel != "Todos" else ""))
-
-if not st.session_state.get("mapa_cargado"):
-    st.info("Selecciona los filtros en el sidebar y haz click en **Cargar mapa**.")
-    st.stop()
-
-st.divider()
-
 with st.spinner("Cargando datos..."):
     df = cargar_visitas(
         st.session_state["mapa_cliente_id"],
@@ -210,7 +238,7 @@ if df.empty:
     st.warning("Sin datos para los filtros seleccionados.")
     st.stop()
 
-# Clasificar distancias
+# ── Clasificar distancias ─────────────────
 def clasificar(d):
     if pd.isna(d):               return "Sin dato"
     if d <= umbral_amarillo:     return "En rango"
@@ -267,7 +295,8 @@ if not df_mapa.empty:
 
     st_folium(mapa, width="stretch", height=500)
 else:
-    st.info("Sin coordenadas de PDV para mostrar en el mapa.")
+    st.info(f"Sin coordenadas de PDV para mostrar en el mapa.")
+    st.caption(f"Total visitas cargadas: {total:,} · Con coordenadas PDV: {len(df_mapa):,}")
 
 st.divider()
 
@@ -278,48 +307,49 @@ tab1, tab2, tab3 = st.tabs(["Por promotor", "Por ruta", "Detalle críticos"])
 
 with tab1:
     df_prom = df.groupby("promotor").agg(
-        visitas      =("usuario_id",      "count"),
+        visitas      =("usuario_id",       "count"),
         criticas     =("estado_geo", lambda x: (x=="Crítico").sum()),
         alertas      =("estado_geo", lambda x: (x=="Alerta").sum()),
-        dist_promedio=("distancia_metros","mean")
+        dist_promedio=("distancia_metros", "mean")
     ).reset_index()
     df_prom["pct_anomalas"] = round(
         (df_prom["criticas"] + df_prom["alertas"]) / df_prom["visitas"] * 100, 1
     )
     df_prom = df_prom.sort_values("criticas", ascending=False)
-    fig = px.bar(df_prom.head(15), x="promotor", y=["criticas","alertas"],
-                 color_discrete_map={"criticas":"#EF4444","alertas":"#F59E0B"},
+    fig = px.bar(df_prom.head(15), x="promotor", y=["criticas", "alertas"],
+                 color_discrete_map={"criticas":"#EF4444", "alertas":"#F59E0B"},
                  barmode="stack", height=380)
     fig.update_layout(xaxis_title="", yaxis_title="Visitas", xaxis_tickangle=-35)
     st.plotly_chart(fig, width="stretch")
 
 with tab2:
     df_ruta = df.groupby("ruta").agg(
-        visitas =("usuario_id","count"),
+        visitas =("usuario_id", "count"),
         criticas=("estado_geo", lambda x: (x=="Crítico").sum()),
         alertas =("estado_geo", lambda x: (x=="Alerta").sum()),
     ).reset_index()
     df_ruta = df_ruta.sort_values("criticas", ascending=False)
-    fig = px.bar(df_ruta.head(15), x="ruta", y=["criticas","alertas"],
-                 color_discrete_map={"criticas":"#EF4444","alertas":"#F59E0B"},
+    fig = px.bar(df_ruta.head(15), x="ruta", y=["criticas", "alertas"],
+                 color_discrete_map={"criticas":"#EF4444", "alertas":"#F59E0B"},
                  barmode="stack", height=380)
     fig.update_layout(xaxis_title="", yaxis_title="Visitas", xaxis_tickangle=-35)
     st.plotly_chart(fig, width="stretch")
 
 with tab3:
-    df_crit = df[df["estado_geo"].isin(["Crítico","Alerta"])].copy()
+    df_crit = df[df["estado_geo"].isin(["Crítico", "Alerta"])].copy()
     df_crit = df_crit.sort_values("distancia_metros", ascending=False)
     df_crit["distancia_metros"] = df_crit["distancia_metros"].apply(
         lambda x: f"{int(x):,} m" if pd.notna(x) else "—"
     )
     st.dataframe(
-        df_crit[["fecha","promotor","ruta","punto_venta",
-                 "cadena","estado","municipio","distancia_metros","estado_geo"]],
+        df_crit[["fecha", "promotor", "ruta", "punto_venta",
+                 "cadena", "estado", "municipio", "distancia_metros", "estado_geo"]],
         hide_index=True, width="stretch"
     )
 
-    # ── LISTADO DETALLADO ─────────────────────────────────
 st.divider()
+
+# ── LISTADO DETALLADO ─────────────────────
 st.markdown('<p class="section-title">Listado detallado de visitas</p>',
             unsafe_allow_html=True)
 
@@ -400,14 +430,13 @@ st.dataframe(
     hide_index=True,
     width="stretch",
     column_config={
-        "Estatus": st.column_config.TextColumn(width="small"),
+        "Estatus":       st.column_config.TextColumn(width="small"),
         "Distancia (m)": st.column_config.NumberColumn(width="small"),
         "Fuera de ruta": st.column_config.NumberColumn(width="small"),
     }
 )
 
 if exportar:
-    import io
     buffer = io.BytesIO()
     df_det.to_excel(buffer, index=False)
     buffer.seek(0)
